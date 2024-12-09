@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES6",                  // Set to ES6 for async/await
+    "module": "commonjs",             // Use commonjs module for Node.js
+    "outDir": "./dist",               // Output the compiled files to a 'dist' folder
+    "rootDir": "./src",               // Source files are in the 'src' folder
+    "esModuleInterop": true,          // Enable default imports for CommonJS modules
+    "skipLibCheck": true,             // Skip library check to speed up compilation
+    "strict": true,                   // Enable strict type-checking options
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*"],            // Include all files in the 'src' folder
+  "exclude": ["node_modules"]         // Exclude 'node_modules'
+}
