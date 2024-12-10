@@ -90,6 +90,20 @@ const generateUniqueId = () => {
   return uuidv4();
 };
 
+// Periodically check the health of connections
+const interval = setInterval(() => {
+  console.log('Checking connection health');
+  if (clients.size === 0) return;
+  clients.forEach((ws) => {
+    if (!ws.isAlive) {
+      console.log('Terminating unresponsive connection');
+      return ws.terminate();
+    }
+    ws.isAlive = false; // Mark as unresponsive until pong is received
+    ws.ping();
+  });
+}, 30000); // Check every 60 seconds
+
 wss.on('connection', (ws: ExtWebSocket) => {
   const id = generateUniqueId();
   clients.set(id, ws);
@@ -102,30 +116,56 @@ wss.on('connection', (ws: ExtWebSocket) => {
     ws.isAlive = true;
   });
 
-  ws.send(JSON.stringify({ type: 'connection', data: 'Connected to server' }));
+  ws.send(
+    JSON.stringify({
+      type: 'connection',
+      data: 'Connected to server',
+      timeStamp: new Date().getTime(),
+    })
+  );
   // Notify other clients that a new client has connected and send the new client's id
-  broadcastMessage(JSON.stringify({ type: 'new-connection', data: id }), ws);
+  broadcastMessage(
+    JSON.stringify({
+      type: 'new-connection',
+      data: id,
+      timeStamp: new Date().getTime(),
+    }),
+    ws
+  );
   //Notify the new client of its id
-  ws.send(JSON.stringify({ type: 'id', data: id }));
+  ws.send(
+    JSON.stringify({ type: 'id', data: id, timeStamp: new Date().getTime() })
+  );
 
   // Inform the new client of existing clients
   const existingClients = Array.from(clients.keys()).filter(
     (clientId) => clientId !== id
   );
-  ws.send(JSON.stringify({ type: 'existing-clients', data: existingClients }));
+  ws.send(
+    JSON.stringify({
+      type: 'existing-clients',
+      data: existingClients,
+      timeStamp: new Date().getTime(),
+    })
+  );
 
   //listen for messages from the client
   ws.on('message', (message: string) => {
     try {
       const parsedMessage = JSON.parse(message);
-      const { type, reciever, data } = parsedMessage;
+      const { type, receiver, data } = parsedMessage;
 
       //send message to specific client
-      if (reciever) {
+      if (receiver) {
         broadcastMessage(
-          JSON.stringify({ type: 'message', data: data, sender: id }),
+          JSON.stringify({
+            type: 'message',
+            data: data,
+            sender: id,
+            timeStamp: new Date().getTime(),
+          }),
           ws,
-          reciever
+          receiver
         );
         return;
       } else {
@@ -135,6 +175,7 @@ wss.on('connection', (ws: ExtWebSocket) => {
             type: 'message',
             data: data,
             sender: id,
+            timeStamp: new Date().getTime(),
           }),
           ws
         );
@@ -144,27 +185,26 @@ wss.on('connection', (ws: ExtWebSocket) => {
     }
   });
 
-  // Periodically check the health of connections
-  const interval = setInterval(() => {
-    console.log('Checking connection health');
-    clients.forEach((ws) => {
-      if (!ws.isAlive) {
-        console.log('Terminating unresponsive connection');
-        return ws.terminate();
-      }
-      ws.isAlive = false; // Mark as unresponsive until pong is received
-      ws.ping();
-    });
-  }, 30000); // Check every 60 seconds
-
   //listen for client disconnection
   ws.on('close', () => {
     console.log('Client disconnected');
-    broadcastMessage(JSON.stringify({ type: 'disconnection', data: id }), ws);
+    broadcastMessage(
+      JSON.stringify({
+        type: 'disconnection',
+        data: id,
+        timeStamp: new Date().getTime(),
+      }),
+      ws
+    );
     clients.delete(id);
-    clearInterval(interval);
   });
 });
+
+// Clear the interval on server shutdown
+wss.on('close', () => {
+  clearInterval(interval);
+});
+
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
