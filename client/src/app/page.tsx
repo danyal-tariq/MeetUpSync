@@ -1,11 +1,11 @@
 'use client'
 import { useState, useEffect, useRef } from 'react';
 import io, { Socket } from 'socket.io-client';
+import SimplePeer from 'simple-peer';
 import Search from '../components/ui/search';
 import FriendList from '../components/ui/friendlist';
 import FriendRequests from '../components/ui/friendrequest';
 import { axiosInstance } from '@/utils/axios';
-
 
 export default function ChatPage() {
   const [socket, setSocket] = useState<Socket | null>(null);
@@ -22,6 +22,13 @@ export default function ChatPage() {
   const [messageInput, setMessageInput] = useState('');
   const [token, setToken] = useState<string | null>(null);
   const chatRef = useRef<HTMLDivElement>(null);
+
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [receivingCall, setReceivingCall] = useState(false);
+  const [caller, setCaller] = useState('');
+  const [callerSignal, setCallerSignal] = useState<SimplePeer.SignalData | null>(null);
+  const [callAccepted, setCallAccepted] = useState(false);
+  const [peer, setPeer] = useState<SimplePeer.Instance | null>(null);
 
   useEffect(() => {
     setToken(localStorage.getItem('token'));
@@ -55,6 +62,16 @@ export default function ChatPage() {
 
     newSocket.on('friendRequest', (data) => {
       alert(data.message);
+    });
+
+    newSocket.on('callUser', (data) => {
+      setReceivingCall(true);
+      setCaller(data.from);
+      setCallerSignal(data.signal);
+    });
+
+    newSocket.on('endCall', () => {
+      endCall();
     });
 
     return () => {
@@ -103,6 +120,74 @@ export default function ChatPage() {
     }
   };
 
+  const callUser = (id: string) => {
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
+      setStream(stream);
+      const peer = new SimplePeer({
+        initiator: true,
+        trickle: false,
+        stream: stream,
+      });
+
+      peer.on('signal', (data) => {
+        socket?.emit('callUser', {
+          userToCall: id,
+          signalData: data,
+          from: username,
+        });
+      });
+
+      peer.on('stream', (stream) => {
+        const video = document.querySelector('video#remoteVideo') as HTMLVideoElement;
+        if (video) {
+          video.srcObject = stream;
+        }
+      });
+
+      setPeer(peer);
+    });
+  };
+
+  const answerCall = () => {
+    setCallAccepted(true);
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
+      setStream(stream);
+      const peer = new SimplePeer({
+        initiator: false,
+        trickle: false,
+        stream: stream,
+      });
+
+      peer.on('signal', (data) => {
+        socket?.emit('answerCall', { signal: data, to: caller });
+      });
+
+      peer.on('stream', (stream) => {
+        const video = document.querySelector('video#remoteVideo') as HTMLVideoElement;
+        if (video) {
+          video.srcObject = stream;
+        }
+      });
+
+      peer.signal(callerSignal!);
+      setPeer(peer);
+    });
+  };
+
+  const endCall = () => {
+    setCallAccepted(false);
+    setReceivingCall(false);
+    setCaller('');
+    setCallerSignal(null);
+    if (peer) {
+      peer.destroy();
+    }
+    setPeer(null);
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+    }
+    setStream(null);
+  };
 
   useEffect(() => {
     //animate scroll to bottom
@@ -111,6 +196,7 @@ export default function ChatPage() {
       behavior: 'smooth',
     })
   }, [messages]);
+
   return (
     <div className="flex h-screen">
       <div className="border-r border-gray-300/10 p-4 flex flex-col w-fit h-full justify-start">
@@ -157,6 +243,12 @@ export default function ChatPage() {
               >
                 Send
               </button>
+              <button
+                onClick={() => callUser(currentChat.id)}
+                className="ml-2 px-8 py-2 bg-[#a3a3a342] hover:bg-[#dadada42] text-white rounded  h-full"
+              >
+                Call
+              </button>
             </div>
           </>
         ) : (
@@ -165,6 +257,19 @@ export default function ChatPage() {
           </div>
         )}
       </div>
+      {receivingCall && !callAccepted && (
+        <div className="fixed bottom-4 right-4 bg-white p-4 rounded shadow-lg">
+          <p>{caller} is calling you</p>
+          <button onClick={answerCall} className="bg-green-500 text-white px-4 py-2 rounded">Answer</button>
+          <button onClick={endCall} className="bg-red-500 text-white px-4 py-2 rounded ml-2">Decline</button>
+        </div>
+      )}
+      {callAccepted && (
+        <div className="fixed bottom-4 right-4 bg-white p-4 rounded shadow-lg">
+          <video id="remoteVideo" autoPlay playsInline className="w-full h-full"></video>
+          <button onClick={endCall} className="bg-red-500 text-white px-4 py-2 rounded mt-2">End Call</button>
+        </div>
+      )}
     </div>
   );
 }
