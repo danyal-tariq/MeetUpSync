@@ -1,9 +1,8 @@
-// chat-app/components/FriendRequests.js
 import { useState, useEffect } from 'react';
 import type { Socket } from 'socket.io-client';
 import { axiosInstance } from '@/utils/axios';
 
-export default function FriendRequests({ socket }: { socket: Socket | null }) {
+export default function FriendRequests({ socket, callUser }: { socket: Socket | null, callUser: (id: string) => void }) {
     const [requests, setRequests] = useState<{ _id: string; username: string }[]>([]);
 
     useEffect(() => {
@@ -65,6 +64,11 @@ export default function FriendRequests({ socket }: { socket: Socket | null }) {
                             className='bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-2 rounded-md self-end'
                             onClick={() => acceptRequest(req._id)}>
                             Accept
+                        </button>
+                        <button
+                            className='bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-2 rounded-md self-end'
+                            onClick={() => callUser(req._id)}>
+                            Call
                         </button>
                     </li>
                 ))}
