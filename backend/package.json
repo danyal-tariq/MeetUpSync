@@ -3,10 +3,19 @@
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.1",
     "@types/ws": "^8.5.13",
+    "bcryptjs": "^3.0.2",
+    "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.10.1",
+    "socket.io": "^4.8.1",
     "typescript": "^5.7.2",
     "uuid": "^11.0.3",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.8"
   }
 }
