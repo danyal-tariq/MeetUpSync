@@ -1,210 +1,128 @@
-//! Server for video calls, chat, and screen sharing using WebRTC
-// To manage WebRTC communication, handle these message types:
-
-// Offer: Sent when a user wants to start a call (initiate WebRTC).
-// Answer: Sent in response to an offer (to accept the call).
-// ICE candidates: Sent to exchange ICE candidate information for establishing peer-to-peer connectivity.
-
-// We will use the WebSocket protocol to exchange these messages between clients and the server.
+// chat-backend/server.js
 import express from 'express';
-import { WebSocketServer, WebSocket } from 'ws';
-
-interface ExtWebSocket extends WebSocket {
-  isAlive: boolean;
-}
 import http from 'http';
-import dotenv from 'dotenv';
-import { v4 as uuidv4 } from 'uuid';
+import socketIo from 'socket.io';
+import { Socket } from 'socket.io';
+import mongoose from 'mongoose';
+const cors = require('cors');
+const helmet = require('helmet');
+const jwt = require('jsonwebtoken');
+const authRoutes = require('./routes/auth');
+const friendRoutes = require('./routes/friend');
+const chatRoutes = require('./routes/chat');
+const User = require('./models/User');
+const Message = require('./models/Message');
+require('dotenv').config();
 
-dotenv.config();
-
-const PORT = process.env.PORT || 5000;
 const app = express();
 const server = http.createServer(app);
-
-// Enable CORS
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Headers', '*');
-  next();
+export const io = new socketIo.Server(server, {
+  cors: { origin: 'http://localhost:8080', methods: ['GET', 'POST'] },
 });
 
-// Create WebSocket server
-const wss = new WebSocketServer({ server });
+app.use(cors());
+app.use(helmet());
+app.use(express.json());
+app.use('/api/auth', authRoutes);
+app.use('/api/friends', friendRoutes);
+app.use('/api/chat', chatRoutes);
 
-// Store clients
-const clients: Map<string, ExtWebSocket> = new Map();
+mongoose.connect(process.env.MONGODB_URL ?? '').then(() => console.log('MongoDB connected'));
 
-const sendMessageToClient = (
-  message: string,
-  targetClient: ExtWebSocket,
-  targetId: string
-) => {
-  targetClient.send(message);
-  console.log('Message sent to: ', targetId);
-};
-
-const handleClientNotFound = (sender: WebSocket) => {
-  sender.send(JSON.stringify({ type: 'error', data: 'Client not found' }));
-  console.log('Client not found');
-};
-
-const broadcastMessageToAll = (
-  message: string,
-  sender: WebSocket,
-  senderId: string
-) => {
-  console.log(`Message sent to all clients from: ${senderId}`);
-  clients.forEach((client) => {
-    if (client !== sender) {
-      client.send(message);
-      console.log('Message sent to client');
-    }
-  });
-};
-
-const broadcastMessage = (
-  message: string,
-  sender: WebSocket,
-  targetId?: string
-) => {
-  console.log('Broadcasting message: ', message);
-  if (targetId) {
-    const targetClient = clients.get(targetId);
-    if (targetClient) {
-      sendMessageToClient(message, targetClient, targetId);
-    } else {
-      handleClientNotFound(sender);
-    }
-  } else {
-    const senderId = Array.from(clients.entries()).find(
-      ([key, client]) => client === sender
-    )?.[0];
-    if (senderId) {
-      broadcastMessageToAll(message, sender, senderId);
-    }
+// Middleware to authenticate socket connections
+io.use((socket, next) => {
+  const token = socket.handshake.query.token;
+  if (!token) return next(new Error('Authentication error'));
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET as string);
+    (socket as SocketWithUser).user = decoded;
+    next();
+  } catch (err) {
   }
-};
+});
 
-const generateUniqueId = () => {
-  return uuidv4();
-};
+interface SocketWithUser extends Socket {
+  user: any;
+}
 
-// Periodically check the health of connections
-const interval = setInterval(() => {
-  console.log('Checking connection health');
-  if (clients.size === 0) return;
-  clients.forEach((ws) => {
-    if (!ws.isAlive) {
-      console.log('Terminating unresponsive connection');
-      return ws.terminate();
-    }
-    ws.isAlive = false; // Mark as unresponsive until pong is received
-    ws.ping();
-  });
-}, 30000); // Check every 60 seconds
+// Socket.io events
+io.on('connection', async (socket) => {
+  const userSocket = socket as SocketWithUser;
+  console.log(`User connected: ${userSocket.user.username}`);
+  await User.findByIdAndUpdate(userSocket.user.id, { online: true });
 
-wss.on('connection', (ws: ExtWebSocket) => {
-  const id = generateUniqueId();
-  clients.set(id, ws);
+  io.to(userSocket.id).emit('connected', { id: userSocket.user.id, username: userSocket.user.username });
 
-  ws.isAlive = true;
-
-  // Handle `pong` responses from the client
-  ws.on('pong', () => {
-    console.log('Pong received from client');
-    ws.isAlive = true;
+  userSocket.on('joinRoom', (room) => {
+    userSocket.join(room);
+    const usersInRoom = Array.from(io.sockets.adapter.rooms.get(room) || [])
+      .map((id) => {
+        const socket = io.sockets.sockets.get(id) as SocketWithUser;
+        return socket?.user?.username;
+      })
+      .filter(Boolean);
+    io.to(room).emit('updateOnlineStatus', usersInRoom);
   });
 
-  ws.send(
-    JSON.stringify({
-      type: 'connection',
-      data: 'Connected to server',
-      timeStamp: new Date().getTime(),
-    })
-  );
-  // Notify other clients that a new client has connected and send the new client's id
-  broadcastMessage(
-    JSON.stringify({
-      type: 'new-connection',
-      data: id,
-      timeStamp: new Date().getTime(),
-    }),
-    ws
-  );
-  //Notify the new client of its id
-  ws.send(
-    JSON.stringify({ type: 'id', data: id, timeStamp: new Date().getTime() })
-  );
+  userSocket.on('sendMessage', async (data) => {
+    const { recipientType, recipientId, text } = data;
+    const senderId = userSocket.user.id;
 
-  // Inform the new client of existing clients
-  const existingClients = Array.from(clients.keys()).filter(
-    (clientId) => clientId !== id
-  );
-  ws.send(
-    JSON.stringify({
-      type: 'existing-clients',
-      data: existingClients,
-      timeStamp: new Date().getTime(),
-    })
-  );
+    const message = new Message({
+      sender: senderId,
+      recipient: recipientType === 'user' ? recipientId : null,
+      room: recipientType === 'room' ? recipientId : null,
+      text,
+    });
+    await message.save();
 
-  //listen for messages from the client
-  ws.on('message', (message: string) => {
-    try {
-      const parsedMessage = JSON.parse(message);
-      const { type, receiver, data } = parsedMessage;
-
-      //send message to specific client
-      if (receiver) {
-        broadcastMessage(
-          JSON.stringify({
-            type: 'message',
-            data: data,
-            sender: id,
-            timeStamp: new Date().getTime(),
-          }),
-          ws,
-          receiver
-        );
-        return;
-      } else {
-        //send message to all clients
-        broadcastMessage(
-          JSON.stringify({
-            type: 'message',
-            data: data,
-            sender: id,
-            timeStamp: new Date().getTime(),
-          }),
-          ws
-        );
+    if (recipientType === 'user') {
+      const recipientSocket = findSocketByUserId(recipientId);
+      if (recipientSocket) {
+        io.to(recipientSocket.id).emit('newMessage', {
+          sender: userSocket.user.username,
+          text,
+          timestamp: message.timestamp,
+        });
       }
-    } catch (error) {
-      console.log('Error parsing message: ', error);
+    } else if (recipientType === 'room') {
+      io.to(recipientId).emit('newMessage', {
+        sender: userSocket.user.username,
+        text,
+        timestamp: message.timestamp,
+      });
     }
   });
 
-  //listen for client disconnection
-  ws.on('close', () => {
-    console.log('Client disconnected');
-    broadcastMessage(
-      JSON.stringify({
-        type: 'disconnection',
-        data: id,
-        timeStamp: new Date().getTime(),
-      }),
-      ws
-    );
-    clients.delete(id);
+  userSocket.on('sendFriendRequest', async (data) => {
+    const from = userSocket.user.id;
+    console.log('Sending to:', data.to);
+    const recipientSocket = findSocketByUserId(data.to);
+    if (recipientSocket) {
+      console.log('Sending friend request to:', recipientSocket.user.username);
+      io.to(recipientSocket.id).emit('friendRequest', {
+        from: userSocket.user.username,
+        id: from,
+        message: `${userSocket.user.username} sent you a friend request!`,
+      });
+    }
   });
+
+  userSocket.on('disconnect', async () => {
+    console.log(`User disconnected: ${userSocket.user.username}`);
+    await User.findByIdAndUpdate(userSocket.user.id, { online: false });
+  })
 });
 
-// Clear the interval on server shutdown
-wss.on('close', () => {
-  clearInterval(interval);
-});
 
-server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+function findSocketByUserId(userId: string) {
+  for (const [_, socket] of io.sockets.sockets) {
+    const userSocket = socket as SocketWithUser;
+    if (userSocket.user && userSocket.user.id === userId) {
+      console.log('Found socket for:', userSocket.user.username);
+      return userSocket;
+    };
+  }
+}
+
+server.listen(3001, () => console.log('Server running on port 3001'));
