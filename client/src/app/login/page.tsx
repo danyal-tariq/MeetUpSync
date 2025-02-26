@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import axios from 'axios';
+import { axiosInstance } from '@/utils/axios';
 
 export default function Login() {
     const [username, setUsername] = useState('');
@@ -11,7 +11,7 @@ export default function Login() {
 
     const handleLogin = async () => {
         try {
-            const res = await axios.post('http://localhost:3001/api/auth/login', {
+            const res = await axiosInstance.post('auth/login', {
                 username,
                 password,
             });
@@ -44,7 +44,7 @@ export default function Login() {
                 Login
             </button>
             <p>
-                Don't have an account?{' '}
+                Don&apos;t have an account?{' '}
                 <a href="/signup" style={{ color: 'blue' }}>
                     Signup
                 </a>

@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from 'react';
 import io, { Socket } from 'socket.io-client';
-import SimplePeer from 'simple-peer';
+import Peer from 'simple-peer';
 import Search from '../components/ui/search';
 import FriendList from '../components/ui/friendlist';
 import FriendRequests from '../components/ui/friendrequest';
@@ -10,6 +10,7 @@ import { axiosInstance } from '@/utils/axios';
 export default function ChatPage() {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [username, setUsername] = useState('');
+  const [id, setId] = useState('');
 
   interface Message {
     sender: { username: string };
@@ -26,9 +27,10 @@ export default function ChatPage() {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [receivingCall, setReceivingCall] = useState(false);
   const [caller, setCaller] = useState('');
-  const [callerSignal, setCallerSignal] = useState<SimplePeer.SignalData | null>(null);
+  const [callerSignal, setCallerSignal] = useState<Peer.SignalData | null>(null);
   const [callAccepted, setCallAccepted] = useState(false);
-  const [peer, setPeer] = useState<SimplePeer.Instance | null>(null);
+  const [peer, setPeer] = useState<Peer.Instance | null>(null);
+  const myVideo = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     setToken(localStorage.getItem('token'));
@@ -36,12 +38,27 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (!token) return;
-    const newSocket = io('http://localhost:3001', { query: { token } });
+    const newSocket = io('https://wtw1vt8p-3001.inc1.devtunnels.ms', { query: { token } });
     setSocket(newSocket);
+
+    // Get media stream
+    //if device is
+    navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
+      .then((currentStream) => {
+        setStream(currentStream);
+        if (myVideo.current) {
+          myVideo.current.srcObject = currentStream;
+        }
+      }).catch((err) => {
+        console.error('Failed to get user media:', err);
+      });
+
+
 
     newSocket.on('connected', (data) => {
       console.log('Connected to socket server');
       setUsername(data.username);
+      setId(data.id);
     });
 
     newSocket.on('newMessage', (message) => {
@@ -64,17 +81,23 @@ export default function ChatPage() {
       alert(data.message);
     });
 
+
+
     newSocket.on('callUser', (data) => {
       setReceivingCall(true);
       setCaller(data.from);
       setCallerSignal(data.signal);
     });
 
+
     newSocket.on('endCall', () => {
       endCall();
     });
 
     return () => {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
       newSocket.disconnect();
     };
   }, [token]);
@@ -97,6 +120,8 @@ export default function ChatPage() {
         socket?.emit('joinRoom', currentChat.id);
       }
     }
+
+    console.log('currentChat:', currentChat);
   }, [currentChat, socket, token]);
 
   const sendMessage = () => {
@@ -120,61 +145,92 @@ export default function ChatPage() {
     }
   };
 
-  const callUser = (id: string) => {
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
-      setStream(stream);
-      const peer = new SimplePeer({
-        initiator: true,
-        trickle: false,
-        stream: stream,
-      });
-
-      peer.on('signal', (data) => {
-        socket?.emit('callUser', {
-          userToCall: id,
-          signalData: data,
-          from: username,
-        });
-      });
-
-      peer.on('stream', (stream) => {
-        const video = document.querySelector('video#remoteVideo') as HTMLVideoElement;
-        if (video) {
-          video.srcObject = stream;
-        }
-      });
-
-      setPeer(peer);
+  const callUser = (idToCall: string) => {
+    const peer = new Peer({
+      initiator: true,
+      trickle: false,
+      stream: stream as MediaStream,
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:global.stun.twilio.com:3478' }
+        ]
+      }
     });
+
+    peer.on('signal', (data) => {
+      socket!.emit('callUser', {
+        userToCall: idToCall,
+        signalData: data,
+        from: id,
+        name: username,
+      });
+    });
+
+    peer.on('stream', (stream) => {
+      console.log('stream:', stream.getTracks());
+      if (myVideo.current) {
+        myVideo.current.srcObject = stream;
+      }
+    });
+
+    peer.on('error', (err) => {
+      console.error("Peer connection error:", err);
+    });
+
+    peer.on('connect', () => {
+      console.log("Peer connection established!");
+    });
+
+    socket!.on('callAccepted', (signal) => {
+      console.log('call accepted:', signal);
+      setCallAccepted(true);
+      peer.signal(signal);
+    });
+
+    setPeer(peer);
   };
 
   const answerCall = () => {
     setCallAccepted(true);
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
-      setStream(stream);
-      const peer = new SimplePeer({
-        initiator: false,
-        trickle: false,
-        stream: stream,
-      });
 
-      peer.on('signal', (data) => {
-        socket?.emit('answerCall', { signal: data, to: caller });
-      });
-
-      peer.on('stream', (stream) => {
-        const video = document.querySelector('video#remoteVideo') as HTMLVideoElement;
-        if (video) {
-          video.srcObject = stream;
-        }
-      });
-
-      peer.signal(callerSignal!);
-      setPeer(peer);
+    const peer = new Peer({
+      initiator: false,
+      trickle: false,
+      stream: stream as MediaStream,
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:global.stun.twilio.com:3478' }
+        ]
+      }
     });
+
+    peer.on('signal', (data) => {
+      socket!.emit('answerCall', { signal: data, to: caller });
+    });
+
+    peer.on('stream', (stream) => {
+      console.log('stream:', stream.getTracks());
+      if (myVideo.current) {
+        myVideo.current.srcObject = stream;
+      }
+    });
+
+    peer.on('error', (err) => {
+      console.error("Peer connection error:", err);
+    });
+
+    peer.on('connect', () => {
+      console.log("Peer connection established!");
+    });
+
+    peer.signal(callerSignal as Peer.SignalData);
+    setPeer(peer);
   };
 
   const endCall = () => {
+    socket?.emit('endCall', { to: caller });
     setCallAccepted(false);
     setReceivingCall(false);
     setCaller('');
@@ -186,8 +242,8 @@ export default function ChatPage() {
     if (stream) {
       stream.getTracks().forEach((track) => track.stop());
     }
-    setStream(null);
   };
+
 
   useEffect(() => {
     //animate scroll to bottom
@@ -202,9 +258,9 @@ export default function ChatPage() {
       <div className="border-r border-gray-300/10 p-4 flex flex-col w-fit h-full justify-start">
         <Search socket={socket} />
         <div className='border' />
-        <FriendList newMessage={newMessage ? newMessage : undefined} setChatWith={setCurrentChat as (arg0: { type: 'user' | 'room'; id: string }) => void} />
+        <FriendList callUser={callUser} newMessage={newMessage ? newMessage : undefined} setChatWith={setCurrentChat as (arg0: { type: 'user' | 'room'; id: string }) => void} />
         <div className='border' />
-        <FriendRequests socket={socket} />
+        <FriendRequests callUser={callUser} socket={socket} />
         <div className='border' />
         <button
           onClick={() => setCurrentChat({ type: 'room', id: 'general' })}
@@ -229,6 +285,18 @@ export default function ChatPage() {
                 !messages.length && <div className='flex justify-center'>No messages yet</div>
               }
             </div>
+            {/* User video */}
+            {callAccepted && (
+              <div className="bg-gray-200 rounded p-2">
+                <h2 className="text-lg font-semibold mb-2">{"User"}&apos;s Video</h2>
+                <video
+                  ref={myVideo}
+                  playsInline
+                  autoPlay
+                  className="w-full h-full bg-black"
+                />
+              </div>
+            )}|
             <div className="p-4 border-t border-gray-300/10 flex items-center w-full justify-between self-end">
               <textarea
                 value={messageInput}

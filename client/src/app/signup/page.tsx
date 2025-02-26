@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import axios from 'axios';
+import { axiosInstance } from '@/utils/axios';
 
 export default function Signup() {
     const [username, setUsername] = useState('');
@@ -11,12 +11,13 @@ export default function Signup() {
 
     const handleSignup = async () => {
         try {
-            await axios.post('http://localhost:3001/api/auth/signup', {
+            await axiosInstance.post('auth/signup', {
                 username,
                 password,
             });
             router.push('/login');
-        } catch (err) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } catch (err:any) {
             setError(err.response?.data?.error || 'Signup failed');
         }
     };
