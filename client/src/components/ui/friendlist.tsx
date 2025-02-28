@@ -1,4 +1,3 @@
-// chat-app/components/FriendList.js
 import { useState, useEffect } from 'react';
 import { axiosInstance } from '@/utils/axios';
 
@@ -14,10 +13,11 @@ interface friend {
     };
 }
 
-export default function FriendList({ setChatWith, newMessage }:
+export default function FriendList({ setChatWith, newMessage, callUser }:
     {
         setChatWith: (arg0: { type: 'user' | 'room'; id: string }) => void,
-        newMessage?: { sender: {username:string}; text: string; timestamp: number }
+        newMessage?: { sender: {username:string}; text: string; timestamp: number },
+        callUser: (id: string) => void
     }) {
     const [friends, setFriends] = useState<friend[]>([]);
 
@@ -88,6 +88,14 @@ export default function FriendList({ setChatWith, newMessage }:
                                 {friend?.lastMessage?.text}
                             </p>
                         </div>
+                        <button
+                            className='bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-2 rounded-md self-end'
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                callUser(friend.id);
+                            }}>
+                            Call
+                        </button>
                     </li>
                 ))}
             </ul>

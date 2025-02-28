@@ -1,4 +1,3 @@
-// chat-backend/server.js
 import express from 'express';
 import http from 'http';
 import socketIo from 'socket.io';
@@ -17,7 +16,7 @@ require('dotenv').config();
 const app = express();
 const server = http.createServer(app);
 export const io = new socketIo.Server(server, {
-  cors: { origin: 'http://localhost:8080', methods: ['GET', 'POST'] },
+  cors: { origin: 'https://wtw1vt8p-8080.inc1.devtunnels.ms', methods: ['GET', 'POST'] },
 });
 
 app.use(cors());
@@ -105,6 +104,31 @@ io.on('connection', async (socket) => {
         id: from,
         message: `${userSocket.user.username} sent you a friend request!`,
       });
+    }
+  });
+
+  userSocket.on('callUser', (data) => {
+    const { userToCall, signalData, from } = data;
+    const recipientSocket = findSocketByUserId(userToCall);
+    if (recipientSocket) {
+      io.to(recipientSocket.id).emit('callUser', { signal: signalData, from });
+    }
+  });
+
+  userSocket.on('answerCall', (data) => {
+    const { signal, to } = data;
+    const recipientSocket = findSocketByUserId(to);
+    if (recipientSocket) {
+      io.to(recipientSocket.id).emit('callAccepted', signal);
+      console.log(recipientSocket.user.username, 'accepted call');
+    }
+  });
+
+  userSocket.on('endCall', (data) => {
+    const { to } = data;
+    const recipientSocket = findSocketByUserId(to);
+    if (recipientSocket) {
+      io.to(recipientSocket.id).emit('endCall');
     }
   });
 
